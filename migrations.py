@@ -105,3 +105,59 @@ async def m005_entry_invoice_attempts(db):
         submission_id TEXT NOT NULL, player_id TEXT NOT NULL,
         run_id TEXT NOT NULL, amount BIGINT NOT NULL, created_at BIGINT NOT NULL
     )""")
+
+
+async def m006_settlement(db):
+    await db.execute("""CREATE TABLE satshole.settlements (
+        competition_id TEXT PRIMARY KEY, plan TEXT NOT NULL, pot BIGINT NOT NULL,
+        carry_amount BIGINT NOT NULL, carry_to TEXT NOT NULL, created_at BIGINT NOT NULL
+    )""")
+    await db.execute("""CREATE TABLE satshole.outgoing (
+        id TEXT PRIMARY KEY, kind TEXT NOT NULL, competition_id TEXT NOT NULL,
+        wallet_id TEXT NOT NULL,address TEXT NOT NULL,amount BIGINT NOT NULL,
+        status TEXT NOT NULL,payment_hash TEXT UNIQUE,bolt11 TEXT,error TEXT,
+        created_at BIGINT NOT NULL
+    )""")
+
+
+async def m007_outgoing_receipts(db):
+    await db.execute("""CREATE TABLE satshole.outgoing_receipts (
+        outgoing_id TEXT PRIMARY KEY, payment_hash TEXT NOT NULL UNIQUE,
+        kind TEXT NOT NULL, competition_id TEXT NOT NULL,
+        amount BIGINT NOT NULL, fee_msat BIGINT NOT NULL, paid_at BIGINT NOT NULL
+    )""")
+
+
+async def m008_operator_review(db):
+    await db.execute("""ALTER TABLE satshole.submissions ADD COLUMN disqualified
+        INTEGER NOT NULL DEFAULT 0""")
+    await db.execute("ALTER TABLE satshole.settlements ADD COLUMN rankings TEXT")
+    await db.execute(
+        "ALTER TABLE satshole.outgoing ADD COLUMN held INTEGER NOT NULL DEFAULT 0"
+    )
+    await db.execute("ALTER TABLE satshole.outgoing ADD COLUMN send_started_at BIGINT")
+    # Existing invoices may have been attempted before send markers existed.
+    await db.execute("""UPDATE satshole.outgoing SET send_started_at=created_at
+        WHERE payment_hash IS NOT NULL""")
+    await db.execute(f"""CREATE TABLE satshole.operator_events (
+        seq {db.serial_primary_key}, id TEXT NOT NULL UNIQUE, actor_id TEXT NOT NULL,
+        kind TEXT NOT NULL,target_id TEXT NOT NULL,reason TEXT NOT NULL,
+        payload TEXT NOT NULL,created_at BIGINT NOT NULL
+    )""")
+    await db.execute("""CREATE TABLE satshole.operator_applied (
+        event_id TEXT PRIMARY KEY,applied_at BIGINT NOT NULL
+    )""")
+    await db.execute("""CREATE TABLE satshole.admin_refunds (
+        submission_id TEXT PRIMARY KEY,competition_id TEXT NOT NULL,
+        amount BIGINT NOT NULL,prize_debit BIGINT NOT NULL,
+        operator_debit BIGINT NOT NULL,outgoing_id TEXT NOT NULL UNIQUE
+    )""")
+
+
+async def m009_review_indexes(db):
+    if db.type == "SQLITE":
+        await db.execute("""CREATE INDEX satshole.runs_replay_fingerprint
+            ON runs (input_hash,seed)""")
+    else:
+        await db.execute("""CREATE INDEX runs_replay_fingerprint
+            ON satshole.runs (input_hash,seed)""")

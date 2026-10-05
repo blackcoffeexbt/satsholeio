@@ -2,7 +2,7 @@
  * The exact same file is loaded in browsers and the server verifier. */
 ;(function (root) {
   'use strict'
-  const VERSION = 'city-7', MAP = 'bitcoin-borough-7', TPS = 20
+  const VERSION = 'city-5', MAP = 'bitcoin-borough-5', TPS = 20
   const C = {world: 4800, startRadius: 22, speed: 12, growth: 5,
     eatRatio: 140, respawnTicks: 60, huntScore: 30, huntMass: 30}
   const TYPES = [
@@ -131,29 +131,22 @@
   function nearby(cells,h,range) {
     const out=[];for(let x=Math.floor((h.x-range)/200);x<=Math.floor((h.x+range)/200);x++)for(let y=Math.floor((h.y-range)/200);y<=Math.floor((h.y+range)/200);y++)out.push(...(cells.get(x+","+y)||[])); return out.sort((a,b)=>a.id-b.id)
   }
-  function opponentAbility(level){return {speed:8+Math.floor((level-1)*11/9),growthPercent:55+(level-1)*15,searchRadius:500+level*130,reactionTicks:Math.max(1,11-level)}}
   function ai(s,h,cells) {
     const aggression=s.config.competitor_aggression
-    const threats=s.holes.filter(o=>o.id!==h.id&&!o.deadUntil&&o.radius*100>=h.radius*C.eatRatio&&dist(o,h)<(o.radius+180+aggression*35)**2)
-    if(threats.length) { const t=threats.sort((a,b)=>dist(a,h)-dist(b,h)||a.id-b.id)[0]; return direction(h.x-t.x,h.y-t.y) }
-    const ability=opponentAbility(aggression)
-    let best=null,value=-1,leadX=0,leadY=0
-    if(aggression>1)for(const o of s.holes){
-      if(o.id===h.id||o.deadUntil||(o.protectedUntil||0)>s.tick||h.radius*100<o.radius*C.eatRatio)continue
-      const distance=isqrt(dist(h,o)),gap=Math.max(0,distance-h.radius+o.radius/2)
-      const reward=(C.huntScore+o.mass/8)+(C.huntMass+o.mass/6)*.9
-      const v=reward*(.5+aggression*.2)*(h.personality===1?1.4:1)/(15+gap/ability.speed)
-      if(distance<ability.searchRadius&&v>value){value=v;best=o;const lead=Math.min(18,Math.floor(gap/ability.speed));leadX=Math.trunc((o.mx||0)*C.speed*lead/100);leadY=Math.trunc((o.my||0)*C.speed*lead/100)}
+    const threats=s.holes.filter(o=>o.id!==h.id&&!o.deadUntil&&o.radius*100>=h.radius*C.eatRatio&&dist(o,h)<(o.radius+420-aggression*25)**2)
+    if(threats.length&&(aggression<9||h.personality!==3)) { const t=threats.sort((a,b)=>dist(a,h)-dist(b,h)||a.id-b.id)[0]; return direction(h.x-t.x,h.y-t.y) }
+    let best=null, value=-1
+    if(aggression>1) for(const o of s.holes) {
+      if(o.id===h.id||o.deadUntil||h.radius*100<o.radius*C.eatRatio)continue
+      const d=dist(h,o), v=((aggression-1)*1700*(h.personality===1?1.5:h.personality===0?.65:1))/(1+Math.floor(d/1000))
+      if(d<(450+aggression*65)**2&&v>value) { value=v; best=o }
     }
-    for(const o of nearby(cells,h,ability.searchRadius)){
-      const type=TYPES[o.type];if(o.ready>s.tick||type.minRadius>h.radius)continue
-      const gap=Math.max(0,isqrt(dist(h,o))-h.radius+type.size/2)
-      // Value growth as well as score, and compare travel time to the collectible
-      // edge. Large holes sweep nearby objects instead of chasing their centers.
-      const v=(type.score+type.mass*(.6+aggression*.07))/(10+gap/ability.speed)
-      if(v>value){value=v;best=o;leadX=leadY=0}
+    for(const o of nearby(cells,h,900)) {
+      if(o.ready>s.tick||TYPES[o.type].minRadius>h.radius)continue
+      const d=dist(h,o), v=TYPES[o.type].score*60/(1+Math.floor(d/200))
+      if(v>value) { value=v; best=o }
     }
-    if(best)return direction(best.x+leadX-h.x,best.y+leadY-h.y)
+    if(best) return direction(best.x-h.x,best.y-h.y)
     return direction(2400-h.x,2400-h.y)
   }
   function step(s, input=[0,0]) {
@@ -167,27 +160,27 @@
     for(const o of s.objects)if((o.traffic||o.walker)&&o.ready<=s.tick){
       const key=o.axis?'y':'x';o[key]+=o.speed*o.dir;if(o[key]>o.hi){o[key]=o.hi;o.dir=-1}else if(o[key]<o.lo){o[key]=o.lo;o.dir=1}o[o.axis?'x':'y']=o.lane
     }
-    const cells=grid(s),ability=opponentAbility(s.config.competitor_aggression)
+    const cells=grid(s)
     for(const h of s.holes) {
       if(h.deadUntil) { if(s.tick<h.deadUntil)continue; h.deadUntil=0; h.protectedUntil=s.tick+60; h.mass=0; h.radius=C.startRadius; h.x=100+s.rng.int(4600); h.y=100+s.rng.int(4600) }
       if(h.id===0) { h.mx=input[0];h.my=input[1] }
-      else if((s.tick-1)%ability.reactionTicks===0) [h.mx,h.my]=ai(s,h,cells)
+      else if(s.tick%Math.max(2,11-s.config.competitor_aggression)===1) [h.mx,h.my]=ai(s,h,cells)
       const d=Math.max(100,isqrt(h.mx*h.mx+h.my*h.my))
-      h.x=Math.max(h.radius,Math.min(C.world-h.radius,h.x+Math.trunc(h.mx*(h.id?ability.speed:C.speed)/d)))
-      h.y=Math.max(h.radius,Math.min(C.world-h.radius,h.y+Math.trunc(h.my*(h.id?ability.speed:C.speed)/d)))
+      h.x=Math.max(h.radius,Math.min(C.world-h.radius,h.x+Math.trunc(h.mx*(h.id?10:C.speed)/d)))
+      h.y=Math.max(h.radius,Math.min(C.world-h.radius,h.y+Math.trunc(h.my*(h.id?10:C.speed)/d)))
     }
-    // Difficulty scales movement, growth, perception and reactions; Balanced uses 75% growth.
+    // Opponents use a disclosed 75% growth rate and lower movement speed.
     for(const h of s.holes) {
       if(h.deadUntil)continue
       for(const o of nearby(cells,h,h.radius)) {
         const t=TYPES[o.type]
         if(o.ready>s.tick||h.radius<t.minRadius||dist(h,o)>(h.radius-t.size/2)**2)continue
-        h.score+=t.score; h.mass+=h.id?Math.floor(t.mass*ability.growthPercent/100):t.mass; h.radius=radius(h.mass)
+        h.score+=t.score; h.mass+=h.id?Math.floor(t.mass*.75):t.mass; h.radius=radius(h.mass)
         o.eatenBy=h.id;o.eatenTick=s.tick;o.ready=s.tick+t.respawn+s.rng.int(80)
       }
       for(const victim of s.holes) {
         if(victim.id===h.id||victim.deadUntil||(victim.protectedUntil||0)>s.tick||h.radius*100<victim.radius*C.eatRatio||dist(h,victim)>(h.radius-victim.radius/2)**2)continue
-        h.score+=C.huntScore+Math.floor(victim.mass/8); h.mass+=Math.floor((C.huntMass+Math.floor(victim.mass/6))*(h.id?ability.growthPercent/100:1)); h.radius=radius(h.mass)
+        h.score+=C.huntScore+Math.floor(victim.mass/8); h.mass+=Math.floor((C.huntMass+Math.floor(victim.mass/6))*(h.id?.75:1)); h.radius=radius(h.mass)
         victim.score=Math.floor(victim.score*(100-s.config.death_penalty)/100)
         victim.mass=0; victim.radius=C.startRadius; victim.deadUntil=s.tick+C.respawnTicks; victim.deaths++
       }
@@ -206,7 +199,7 @@
     const p=s.holes[0]
     return {score:p.score,mass:p.mass,radius:p.radius,x:p.x,y:p.y,deaths:p.deaths,ticks:s.tick}
   }
-  const engine={VERSION,MAP,TPS,C,TYPES,RNG,make,step,replay,pavementPosition,growthProgress,makeLayout,opponentAbility}
+  const engine={VERSION,MAP,TPS,C,TYPES,RNG,make,step,replay,pavementPosition,growthProgress,makeLayout}
   if(typeof module!=='undefined')module.exports=engine
   else root.SatsHoleEngine=engine
 })(typeof globalThis!=='undefined'?globalThis:this)

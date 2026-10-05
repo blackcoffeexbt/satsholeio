@@ -1,3 +1,4 @@
+import { rankHoles } from './map-scoreboard.js'
 import * as THREE from '../vendor/three.module.js'
 
 // Presentation only: simulation coordinates (x,y) become world coordinates (x,z).
@@ -15,11 +16,28 @@ export class CityRenderer {
     this.cylinder=new THREE.CylinderGeometry(1,1,1,10);this.cone=new THREE.ConeGeometry(1,1,5)
     this.materials=new Map();this.holeUniform={value:Array.from({length:17},()=>new THREE.Vector3(-10000,-10000,0))}
     this.dynamic=new THREE.Group();this.scene.add(this.dynamic);this.objects=[];this.holes=[]
+    this.crown=this.makeCrown();this.crown.visible=false;this.dynamic.add(this.crown)
     this.previous=[];this.target=new THREE.Vector3();this.frustum=new THREE.Frustum();this.projection=new THREE.Matrix4();this.bounds=new THREE.Sphere();
     this.follow=new THREE.Vector3(2400,0,2400);this.distance=420
     this.batches=new Map();this.ground=new THREE.Group();this.scene.add(this.ground);this.popups=[];this.previousObjects=[]
     this.raycaster=new THREE.Raycaster();this.plane=new THREE.Plane(new THREE.Vector3(0,1,0),0)
     this.resize()
+  }
+  makeCrown(){
+    const crown=new THREE.Group(),gold=new THREE.MeshStandardMaterial({color:'#ffc742',metalness:.7,roughness:.26,side:THREE.DoubleSide})
+    const band=new THREE.Mesh(new THREE.CylinderGeometry(.49,.47,.22,32,1,true),gold);band.position.y=.11;crown.add(band)
+    const rimGeometry=new THREE.TorusGeometry(.48,.035,8,32)
+    for(const y of [.02,.22]){const rim=new THREE.Mesh(rimGeometry,gold);rim.rotation.x=Math.PI/2;rim.position.y=y;crown.add(rim)}
+    const point=new THREE.Shape();point.moveTo(-.22,.19);point.lineTo(0,.7);point.lineTo(.22,.19);point.closePath()
+    const pointGeometry=new THREE.ExtrudeGeometry(point,{depth:.055,bevelEnabled:true,bevelThickness:.012,bevelSize:.012,bevelSegments:1,steps:1});pointGeometry.translate(0,0,-.0275)
+    const tipGeometry=new THREE.SphereGeometry(.045,8,6),gemGeometry=new THREE.OctahedronGeometry(.055)
+    const gems=['#e95757','#55cfb0','#6bb5ff'].map(color=>new THREE.MeshStandardMaterial({color,metalness:.2,roughness:.2}))
+    for(let n=0;n<6;n++){const angle=n*Math.PI/3,sin=Math.sin(angle),cos=Math.cos(angle)
+      const peak=new THREE.Mesh(pointGeometry,gold);peak.position.set(sin*.46,0,cos*.46);peak.rotation.y=angle;crown.add(peak)
+      const tip=new THREE.Mesh(tipGeometry,gold);tip.position.set(sin*.46,.7,cos*.46);crown.add(tip)
+      const gem=new THREE.Mesh(gemGeometry,gems[n%3]);gem.position.set(sin*.51,.13,cos*.51);gem.rotation.y=angle;crown.add(gem)
+    }
+    return crown
   }
   material(color,ground=false){const key=color+ground;if(this.materials.has(key))return this.materials.get(key)
     const m=new THREE.MeshStandardMaterial({color,roughness:.85,transparent:ground==='building',depthWrite:ground!=='building'})
@@ -47,7 +65,7 @@ export class CityRenderer {
       if(r.kind==='park'||r.kind==='pond'){
         this.batch('#78a968',cx,9,cz,w-120,3,d-120)
         // Offset paths and a long pond replace roads through these larger districts.
-        this.batch('#e2d6b4',cx-70,12,cz,23,2,d-45);this.batch('#e2d6b4',cx,12,cz+110,w-45,2,22)
+        this.batch('#e2d6b4',cx-70,12,cz,23,2,d-45);this.batch('#e2d6b4',cx,12,cz+(r.kind==='pond'?Math.round(d*.36):110),w-45,2,22)
         if(r.kind==='pond') {this.part(this.ground,this.cylinder,'#c9c3a0',cx+60,13,cz-45,w*.29,3,d*.24,true);this.part(this.ground,this.cylinder,'#5dacc3',cx+60,15,cz-45,w*.275,2,d*.225,true)}
       }else if(r.kind==='parking'){
         this.batch('#65727b',cx,10,cz,w-35,3,d-35)
@@ -57,8 +75,10 @@ export class CityRenderer {
     this.batch('#628c9b',-75,-6,2400,150,8,5100);this.batch('#628c9b',4875,-6,2400,150,8,5100)
   }
   objectModel(o){const g=new THREE.Group(),t=this.engine.TYPES[o.type],r=t.size,v=o.variant
-    const box=(c,x,y,z,sx,sy,sz)=>this.part(g,this.box,c,x,y,z,sx,sy,sz,o.type>=11?'building':false)
-    if(o.type>=11){const height=o.height||(o.type===13?135+v*55:o.type===12?70+v*25:45)
+    const box=(c,x,y,z,sx,sy,sz)=>this.part(g,this.box,c,x,y,z,sx,sy,sz,o.type>=11&&o.type<=16?'building':false)
+    if(o.type===17){const coat=['#b98455','#e6d6ba','#6b5145','#deddd2'][v];box(coat,0,10,0,20,9,9);box(coat,10,14,0,8,9,8);box('#273b3d',15,13,0,3,3,4);box('#765642',8,18,-4,4,7,2);box('#765642',8,18,4,4,7,2);g.userData.legs=[];for(const x of [-6,6])for(const z of [-3,3])g.userData.legs.push(box(coat,x,4,z,3,8,3));const tail=box(coat,-12,14,0,9,3,3);tail.rotation.z=-.6
+    }else if(o.type===18){box('#89948d',0,9,0,56,18,7);box('#c3c4b5',0,19,0,58,3,9);for(const x of [-20,0,20])box('#737e77',x,9,3.6,1,16,.5)
+    }else if(o.type>=11){const height=o.height||(o.type===13?135+v*55:o.type===12?70+v*25:45)
       const c=['#d29b79','#81b4b7','#d8c298','#bd8f9a'][v]
       box(c,0,height/2,0,r*(o.type===14?1.35:1.6),height,r*1.5);box('#596d79',0,height+3,0,r*1.7,6,r*1.6)
       box('#b8c8cd',r*.25,height+10,0,r*.35,14,r*.3)
@@ -75,7 +95,7 @@ export class CityRenderer {
     }else if(o.type===2){box('#f6eee0',-5,9,0,9,2,4);box('#f6eee0',5,9,0,9,2,4)
     }else if(o.type===8){box('#6788a5',0,12,0,30,3,3);for(const x of [-12,12]){const wheel=this.part(g,this.cylinder,'#34464e',x,8,0,8,2,8);wheel.rotation.x=Math.PI/2}}
     else box('#ded4ae',0,3,0,9,6,8)
-    g.position.set(o.x,0,o.y);g.userData={...g.userData,ready:o.ready,fall:0,angle:o.traffic?(o.axis?Math.PI/2:0)+(o.dir<0?Math.PI:0):(o.angle||0),height:o.height||(o.type>=11?180:45)};g.rotation.y=g.userData.angle;return g
+    g.position.set(o.x,0,o.y);g.userData={...g.userData,ready:o.ready,fall:0,angle:(o.traffic||o.walker)?(o.axis?Math.PI/2:0)+(o.dir<0?Math.PI:0):(o.angle||0),height:o.height||(o.type>=11?180:45)};g.rotation.y=g.userData.angle;return g
   }
   reset(state){this.buildGround(state.layout);this.flushBatches();this.clearPopups();for(const g of [...this.objects,...this.holes]){this.dynamic.remove(g);g.traverse(n=>{if(n.isSprite){n.material.map.dispose();n.material.dispose()}})}this.objects=state.objects.map(o=>{const g=this.objectModel(o);this.dynamic.add(g);return g})
     this.holes=state.holes.map(h=>{const g=new THREE.Group()
@@ -109,14 +129,16 @@ export class CityRenderer {
     this.camera.updateMatrixWorld();this.projection.multiplyMatrices(this.camera.projectionMatrix,this.camera.matrixWorldInverse);this.frustum.setFromProjectionMatrix(this.projection)
     this.holeUniform.value.forEach(v=>v.set(-10000,-10000,0))
     state.holes.forEach((h,i)=>{const pose=this.pose(h,i,alpha),r=pose.radius,g=this.holes[i];g.visible=!h.deadUntil;if(g.userData.progress){const current=this.engine.growthProgress(h.mass),previous=this.engine.growthProgress(this.previous[i]?.mass??h.mass);g.userData.progress.value=current.size===previous.size?previous.fraction+(current.fraction-previous.fraction)*alpha:current.fraction}g.position.set(pose.x,0,pose.y);g.scale.set(r,r*1.8,r);g.userData.label.position.set(0,.35,-1.3);g.userData.label.scale.set(100/r,25/(r*1.8),1);if(!h.deadUntil)this.holeUniform.value[i].set(pose.x,pose.y,r)})
-    state.objects.forEach((o,i)=>{const g=this.objects[i],data=g.userData,eaten=o.ready>state.tick;if(o.traffic)data.angle=(o.axis?Math.PI/2:0)+(o.dir<0?Math.PI:0)
+    const leader=rankHoles(state.holes)[0];this.crown.visible=!!leader&&!leader.deadUntil
+    if(this.crown.visible){const h=this.pose(leader,leader.id,alpha),size=Math.max(45,Math.min(110,h.radius*.6));this.crown.position.set(h.x,Math.max(65,h.radius*.63+35)+Math.sin(performance.now()/350)*5,h.y);this.crown.scale.setScalar(size);this.crown.rotation.y=performance.now()/2500}
+    state.objects.forEach((o,i)=>{const g=this.objects[i],data=g.userData,eaten=o.ready>state.tick;if(o.traffic||o.walker)data.angle=(o.axis?Math.PI/2:0)+(o.dir<0?Math.PI:0)
       if(eaten&&!data.ready){const h=state.holes[o.eatenBy??0];data.fall=0;data.fallX=g.position.x;data.fallZ=g.position.z;data.towardX=h.x;data.towardZ=h.y;data.dropRadius=h.radius;if(o.eatenBy===0)this.points(this.engine.TYPES[o.type].score,h)}
       if(!eaten){
-        const p=this.previousObjects[i],smooth=o.traffic&&p&&!p.ready&&Math.abs(p.x-o.x)<100&&Math.abs(p.y-o.y)<100
-        g.position.set(smooth?p.x+(o.x-p.x)*alpha:o.x,0,smooth?p.y+(o.y-p.y)*alpha:o.y);g.scale.setScalar(1);g.rotation.set(0,data.angle,0)
+        const p=this.previousObjects[i],smooth=(o.traffic||o.walker)&&p&&!p.ready&&Math.abs(p.x-o.x)<100&&Math.abs(p.y-o.y)<100
+        g.position.set(smooth?p.x+(o.x-p.x)*alpha:o.x,0,smooth?p.y+(o.y-p.y)*alpha:o.y);g.scale.setScalar(1);g.rotation.set(0,data.angle,0);if(o.walker){const stride=Math.sin((state.tick-1+alpha)*o.speed*.45);g.position.y=Math.abs(stride)*1.1;if(o.type===3){g.children[2].rotation.z=stride*.35;g.children[3].rotation.z=-stride*.35}else if(data.legs)data.legs.forEach((leg,j)=>leg.rotation.z=stride*(j%3===0?1:-1)*.4)}
         // Begin leaning as support disappears under the near edge. The lean axis
         // points toward the hole rather than applying the same rotation to everything.
-        if(o.type>=11){const h=state.holes.filter(h=>!h.deadUntil&&h.radius>=this.engine.TYPES[o.type].minRadius).sort((a,b)=>(a.x-o.x)**2+(a.y-o.y)**2-((b.x-o.x)**2+(b.y-o.y)**2))[0]
+        if(o.type>=11&&o.type<=16){const h=state.holes.filter(h=>!h.deadUntil&&h.radius>=this.engine.TYPES[o.type].minRadius).sort((a,b)=>(a.x-o.x)**2+(a.y-o.y)**2-((b.x-o.x)**2+(b.y-o.y)**2))[0]
           if(h){const dx=h.x-o.x,dz=h.y-o.y,d=Math.hypot(dx,dz),overlap=Math.max(0,Math.min(1,(h.radius+this.engine.TYPES[o.type].size*.65-d)/(this.engine.TYPES[o.type].size*1.3)));g.rotation.x=dz/Math.max(1,d)*overlap*.65;g.rotation.z=-dx/Math.max(1,d)*overlap*.65}
         }
         const height=data.height;this.bounds.center.set(o.x,height/2,o.y);this.bounds.radius=height+this.engine.TYPES[o.type].size;g.visible=this.frustum.intersectsSphere(this.bounds)

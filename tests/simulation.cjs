@@ -9,7 +9,7 @@ test('human and AI consumption, death penalty, respawn',()=>{for(const attacker 
 test('ticks stop at duration; replay matches live state',()=>{const s=E.make(7,config);for(let i=0;i<100;i++)E.step(s,[100,0]);assert.equal(s.tick,40);const p=s.holes[0];assert.deepEqual(E.replay(7,config,[[0,100,0]]),{score:p.score,mass:p.mass,radius:p.radius,x:p.x,y:p.y,deaths:p.deaths,ticks:40})})
 test('pavement objects remain fully off roads at spawn and respawn',()=>{
  const types=new Set([1,3,5,6,7,8])
- function check(o){if(!types.has(o.type))return;const x=o.x%300,y=o.y%300,r=E.TYPES[o.type].size;assert.ok(x-r>=63&&x+r<=299&&y-r>=63&&y+r<=299);assert.ok(x+r<=120||x-r>=244||y+r<=120||y-r>=244)}
+ function check(o){if(!types.has(o.type)||o.park)return;const x=o.x%300,y=o.y%300,r=E.TYPES[o.type].size;assert.ok(x-r>=63&&x+r<=299&&y-r>=63&&y+r<=299);assert.ok(x+r<=120||x-r>=244||y+r<=120||y-r>=244)}
  for(let seed=1;seed<=20;seed++){const s=E.make(seed,{duration:120,ai_count:0});s.objects.forEach(check);s.holes=[];for(let round=0;round<4;round++){s.objects.forEach(o=>o.ready=s.tick+1);E.step(s);s.objects.forEach(check)}}
 })
 test('growth ring uses exact mass boundaries of displayed sizes',()=>{
@@ -28,13 +28,30 @@ test('traffic remains on uninterrupted road lanes through movement and respawn',
 test('cones form fixed curb-aligned rows of five, including after respawn',()=>{
  const s=E.make(19,{ai_count:0});s.holes=[];const cones=s.objects.filter(o=>o.type===1);assert.ok(cones.length>0);assert.equal(cones.length%5,0);for(let i=0;i<cones.length;i+=5)for(let n=0;n<5;n++){assert.equal(cones[i+n].y,cones[i].y);assert.equal(cones[i+n].x,cones[i].x+n*25);assert.equal(cones[i+n].y%300,72)}cones.forEach(o=>o.ready=1);E.step(s);cones.forEach(o=>{assert.equal(o.x,o.homeX);assert.equal(o.y,o.homeY)})
 })
-test('opponents gain only 75 percent of object growth mass',()=>{
- const masses=[];for(const id of [0,1]){const s=E.make(5,{ai_count:1});s.holes=s.holes.filter(h=>h.id===id);const h=s.holes[0];h.x=h.y=2400;s.objects=[{id:0,type:0,x:2400,y:2400,homeX:2400,homeY:2400,ready:0}];E.step(s);masses.push(h.mass);assert.equal(h.score,4)}assert.deepEqual(masses,[7,5])
+test('Balanced opponents gain 115 percent of object growth mass',()=>{
+ const masses=[];for(const id of [0,1]){const s=E.make(5,{ai_count:1});s.holes=s.holes.filter(h=>h.id===id);const h=s.holes[0];h.x=h.y=2400;s.objects=[{id:0,type:0,x:2400,y:2400,homeX:2400,homeY:2400,ready:0}];E.step(s);masses.push(h.mass);assert.equal(h.score,4)}assert.deepEqual(masses,[7,8])
 })
 test('previous city-2 verifier still reproduces its archived engine',()=>{
  const old=require('../static/js/engine-city-2.js'),cp=require('node:child_process'),payload={version:old.VERSION,map:old.MAP,seed:22,config,inputs:[]};const result=cp.spawnSync(process.execPath,['verify.cjs'],{input:JSON.stringify(payload),encoding:'utf8'});assert.equal(result.status,0);assert.deepEqual(JSON.parse(result.stdout),old.replay(payload.seed,config,[]))
 })
 
 test('released browser engine is identical to the current server engine',()=>{
- const released=require('../static/js/engine-city-4.js');for(const seed of [1,42,999])assert.deepEqual(released.replay(seed,config,[[0,100,0],[12,0,100]]),E.replay(seed,config,[[0,100,0],[12,0,100]]))
+ const released=require('../static/js/engine-city-7.js');for(const seed of [1,42,999])assert.deepEqual(released.replay(seed,config,[[0,100,0],[12,0,100]]),E.replay(seed,config,[[0,100,0],[12,0,100]]))
+})
+
+test('walking people and dogs move without entering roads or ponds',()=>{
+ const s=E.make(42,{ai_count:0});s.holes=[];s.objects.forEach(o=>{assert.ok(Number.isInteger(o.x)&&Number.isInteger(o.y))});const walkers=s.objects.filter(o=>o.walker),before=walkers.map(o=>[o.x,o.y]);assert.ok(walkers.some(o=>o.type===17));assert.ok(s.objects.some(o=>o.type===18));assert.ok(s.objects.filter(o=>o.park&&o.type===7).length>100)
+ for(let tick=0;tick<100;tick++){E.step(s);for(const o of walkers){for(const r of s.layout.regions.filter(r=>r.kind==='pond')){const w=r.w*300-63,d=r.h*300-63,cx=r.bx*300+63+w/2,cy=r.by*300+63+d/2;assert.ok(((o.x-cx-60)/(w*.275+10))**2+((o.y-cy+45)/(d*.225+10))**2>=1)}assert.ok(o[o.axis?'y':'x']>=o.lo&&o[o.axis?'y':'x']<=o.hi);assert.equal(o[o.axis?'x':'y'],o.lane);if(!o.park){const r=E.TYPES[o.type].size;assert.ok(o.x%300-r>=63&&o.y%300-r>=63&&o.x%300+r<=299&&o.y%300+r<=299)}}}assert.ok(walkers.some((o,i)=>o.x!==before[i][0]||o.y!==before[i][1]))
+})
+test('all ten aggression levels are deterministic and bounded',()=>{
+ for(let level=1;level<=10;level++){const cfg={...config,competitor_aggression:level};assert.deepEqual(E.replay(21,cfg,[]),E.replay(21,cfg,[]))}for(const level of [0,11,2.5])assert.throws(()=>E.make(1,{competitor_aggression:level}))
+})
+
+test('passive AI forages while relentless AI actively pursues smaller holes',()=>{
+ const positions=[];for(const aggression of [1,10]){const s=E.make(1,{ai_count:1,competitor_aggression:aggression});s.objects=[];const [player,ai]=s.holes;player.x=2700;player.y=2400;ai.x=ai.y=2400;ai.radius=100;E.step(s);positions.push(ai.x)}assert.deepEqual(positions,[2400,2419])
+})
+
+test('difficulty increases opponent speed, growth and perception',()=>{
+ assert.deepEqual(E.opponentAbility(1),{speed:8,growthPercent:55,searchRadius:630,reactionTicks:10});assert.deepEqual(E.opponentAbility(5),{speed:12,growthPercent:115,searchRadius:1150,reactionTicks:6});assert.deepEqual(E.opponentAbility(10),{speed:19,growthPercent:190,searchRadius:1800,reactionTicks:1})
+ const masses=[];for(const level of [1,5,10]){const s=E.make(3,{ai_count:1,competitor_aggression:level});const h=s.holes[1];h.x=h.y=2400;s.holes=[h];s.objects=[{id:0,type:0,x:2400,y:2400,ready:0}];E.step(s);masses.push(h.mass)}assert.deepEqual(masses,[3,8,13])
 })

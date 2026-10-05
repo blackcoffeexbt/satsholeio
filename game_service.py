@@ -17,11 +17,15 @@ from .crud import db
 from .replay import MAP_VERSION, VERSION, verify
 
 DEFAULTS = {
+    "automatic_payouts": False,
+    "settlement_delay": 3600,
+    "undistributed_policy": "carry",
     "enabled": True,
     "game_price": 25,
     "free_runs": 3,
     "duration": 120,
     "ai_count": 8,
+    "competitor_aggression": 5,
     "death_penalty": 20,
     "invoice_expiry": 600,
     "ready_expiry": 3600,

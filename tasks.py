@@ -3,9 +3,11 @@ import asyncio
 from lnbits.tasks import register_invoice_listener
 from loguru import logger
 
-from .competitions import current_competition, record_entry_payment
+from .competitions import record_entry_payment
 from .crud import db
 from .game_service import record_payment
+from .moderation import recover
+from .settlement import maintenance
 
 
 async def wait_for_paid_invoices():
@@ -16,13 +18,17 @@ async def wait_for_paid_invoices():
     await db.execute(
         "UPDATE satshole.entry_invoices SET status='CREATED' WHERE status='INVOICING'"
     )
+    await recover()
     invoice_queue = asyncio.Queue()
     register_invoice_listener(invoice_queue, "ext_satshole")
     while True:
         try:
             payment = await asyncio.wait_for(invoice_queue.get(), timeout=30)
         except asyncio.TimeoutError:
-            await current_competition()
+            try:
+                await maintenance()
+            except Exception:
+                logger.warning("SatsHole settlement maintenance will retry.")
             continue
         try:
             await record_payment(payment)

@@ -42,6 +42,8 @@ def load(name):
 migrations = load("migrations")
 service = load("game_service")
 competition = load("competitions")
+settlement = load("settlement")
+moderation = load("moderation")
 api = load("game_api")
 
 
@@ -51,8 +53,18 @@ class BackendTests(unittest.IsolatedAsyncioTestCase):
             await migrations.m003_game_runs(crud.db)
             await migrations.m004_competitions(crud.db)
             await migrations.m005_entry_invoice_attempts(crud.db)
+            await migrations.m006_settlement(crud.db)
+            await migrations.m007_outgoing_receipts(crud.db)
+            await migrations.m008_operator_review(crud.db)
+            await migrations.m009_review_indexes(crud.db)
             self.__class__.migrated = True
         for table in [
+            "operator_applied",
+            "operator_events",
+            "admin_refunds",
+            "outgoing_receipts",
+            "outgoing",
+            "settlements",
             "entry_overpayments",
             "entry_invoices",
             "competition_events",
@@ -240,6 +252,15 @@ class BackendTests(unittest.IsolatedAsyncioTestCase):
                 ).status_code,
                 401,
             )
+            for path in [
+                "operations",
+                "payments/fake/retry",
+                "competitions/fake/settle",
+            ]:
+                response = await (client.get if path == "operations" else client.post)(
+                    "/satshole/api/v1/game/" + path
+                )
+                self.assertNotEqual(response.status_code, 200)
             session = await client.post("/satshole/api/v1/game/session", json={})
             self.assertEqual(session.status_code, 200)
             self.assertIn("HttpOnly", session.headers["set-cookie"])

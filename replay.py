@@ -3,8 +3,8 @@ import json
 import shutil
 from pathlib import Path
 
-VERSION = "city-4"
-MAP_VERSION = "bitcoin-borough-4"
+VERSION = "city-7"
+MAP_VERSION = "bitcoin-borough-7"
 _replay_slots = asyncio.Semaphore(2)
 
 

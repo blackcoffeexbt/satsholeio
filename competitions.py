@@ -125,14 +125,15 @@ async def ranking(competition_id):
         dict(row)
         for row in await db.fetchall(
             """SELECT * FROM ( SELECT
-        s.player_id,s.display_name,r.authoritative_score AS score,
+        s.player_id,s.run_id,s.display_name,r.authoritative_score AS score,
         e.seq,ROW_NUMBER() OVER (PARTITION BY s.player_id ORDER BY
         r.authoritative_score DESC,e.seq ASC) AS best FROM
         satshole.competition_events e JOIN satshole.submissions s ON
         s.id=e.submission_id JOIN satshole.runs r ON r.id=s.run_id JOIN
         satshole.players p ON p.id=s.player_id WHERE e.competition_id=:id AND
         e.kind='ENTRY_RECEIPT' AND s.status='ENTRY_CREATED' AND
-        r.status='VERIFIED' AND p.blocked=0 ) ranked WHERE best=1 ORDER BY
+        r.status='VERIFIED' AND p.blocked=0 AND s.disqualified=0
+        ) ranked WHERE best=1 ORDER BY
         score DESC,seq ASC""",
             {"id": competition_id},
         )
@@ -158,6 +159,33 @@ async def totals(competition_id=None):
     )
     result["refund_liability"] += refund["amount"]
     result["paid_receipts"] += refund["n"]
+    paid = await db.fetchone(
+        """SELECT COALESCE(SUM(CASE WHEN kind='PRIZE' THEN amount ELSE 0 END),0)
+AS prize, COALESCE(SUM(CASE WHEN kind='REFUND' THEN amount ELSE 0
+END),0) AS refund FROM satshole.outgoing_receipts WHERE 1=1"""
+        + (" AND competition_id=:id" if competition_id else ""),
+        {"id": competition_id} if competition_id else {},
+    )
+    reviewed = await db.fetchone(
+        """SELECT COALESCE(SUM(prize_debit),0) AS prize,
+        COALESCE(SUM(operator_debit),0) AS operator,
+        COALESCE(SUM(amount),0) AS refund FROM satshole.admin_refunds"""
+        + (" WHERE competition_id=:id" if competition_id else ""),
+        {"id": competition_id} if competition_id else {},
+    )
+    result["prize_liability"] -= reviewed["prize"]
+    result["operator_revenue"] -= reviewed["operator"]
+    result["refund_liability"] += reviewed["refund"]
+    result["prize_liability"] -= paid["prize"]
+    result["refund_liability"] -= paid["refund"]
+    if competition_id:
+        carry = await db.fetchone(
+            """SELECT COALESCE(SUM(CASE WHEN carry_to=:id THEN carry_amount ELSE 0
+END),0)-COALESCE(SUM(CASE WHEN competition_id=:id THEN carry_amount
+ELSE 0 END),0) AS amount FROM satshole.settlements""",
+            {"id": competition_id},
+        )
+        result["prize_liability"] += carry["amount"]
     return result
 
 
@@ -175,7 +203,17 @@ async def public_board(competition_id=None):
     config = json.loads(competition["config"])
     accounting = await totals(competition["id"])
     ranked = await ranking(competition["id"])
-    amounts = prizes(accounting["prize_liability"], config)
+    frozen = await db.fetchone(
+        "SELECT * FROM satshole.settlements WHERE competition_id=:id",
+        {"id": competition["id"]},
+    )
+    if frozen and frozen["rankings"] is not None:
+        ranked = json.loads(frozen["rankings"])
+    elif frozen:
+        # Legacy frozen settlements retained only their podium snapshot.
+        ranked = json.loads(frozen["plan"])
+    display_pot = frozen["pot"] if frozen else accounting["prize_liability"]
+    amounts = prizes(display_pot, config)
     entries = await db.fetchone(
         """SELECT COUNT(*) AS n FROM satshole.competition_events
         WHERE competition_id=:id AND kind='ENTRY_RECEIPT'""",
@@ -186,12 +224,15 @@ async def public_board(competition_id=None):
             k: competition[k] for k in ("id", "starts_at", "ends_at", "status")
         },
         "timezone": config["timezone"],
-        "pot": accounting["prize_liability"],
+        "pot": display_pot,
+        "awards_frozen": bool(frozen),
         "paid_submissions": entries["n"],
         "unique_entrants": len(ranked),
         "prizes": amounts,
         "entry_price": config["leaderboard_price"],
-        "entries_enabled": bool((await game.game_config())["leaderboard_enabled"]),
+        "entries_enabled": bool((await game.game_config())["leaderboard_enabled"])
+        and competition["status"] == "OPEN"
+        and competition["ends_at"] > game.now(),
         "rankings": [
             {
                 "position": i + 1,
@@ -211,11 +252,16 @@ async def preview(run_id, player):
     if not current:
         return {"eligible": False, "reason": "Game not configured.", "board": board}
     config = json.loads(current["config"])
+    entry = await db.fetchone(
+        "SELECT disqualified FROM satshole.submissions WHERE run_id=:id", {"id": run_id}
+    )
     reason = None
     if run["status"] != "VERIFIED":
         reason = "This run must be verified first."
     elif run["competition_id"] != current["id"]:
         reason = "This run belongs to a previous competition. Play a new run."
+    elif entry and entry["disqualified"]:
+        reason = "This entry has been disqualified by the operator."
     elif not run["paid"] and not config["allow_free_entries"]:
         reason = "Only paid runs can enter the cash leaderboard."
     ranked = await ranking(current["id"])
@@ -304,7 +350,8 @@ async def create_submission(run_id, player, address):
     return await entry_invoice(
         dict(
             await db.fetchone(
-                "SELECT * FROM satshole.submissions WHERE id=:id", {"id": submission_id}
+                """SELECT * FROM satshole.submissions WHERE id=:id""",
+                {"id": submission_id},
             )
         )
     )
@@ -414,8 +461,32 @@ async def entry_invoice(row):
     return await reconcile_submission(fresh)
 
 
-def public_submission(row):
-    return {k: row[k] for k in ("id", "status", "amount", "bolt11", "expires_at")}
+async def public_submission(row):
+    result = {k: row[k] for k in ("id", "status", "amount", "bolt11", "expires_at")}
+    result["disqualified"] = bool(row["disqualified"])
+    refunds = await db.fetchall(
+        """SELECT o.amount,CASE WHEN receipt.outgoing_id IS NULL THEN 0 ELSE 1
+        END AS paid FROM satshole.outgoing o LEFT JOIN satshole.outgoing_receipts
+        receipt ON receipt.outgoing_id=o.id WHERE o.kind='REFUND' AND
+        (o.id='admin-refund:' || :id OR o.id IN (
+        SELECT 'refund:' || payment_hash FROM satshole.competition_events
+        WHERE submission_id=:id AND refund_liability>0 UNION ALL
+        SELECT 'refund:' || payment_hash FROM satshole.entry_overpayments
+        WHERE submission_id=:id))""",
+        {"id": row["id"]},
+    )
+    result["refund_amount"] = sum(r["amount"] for r in refunds)
+    result["refunded_amount"] = sum(r["amount"] for r in refunds if r["paid"])
+    result["refund_status"] = None
+    if result["refund_amount"]:
+        result["refund_status"] = (
+            "PAID"
+            if result["refunded_amount"] == result["refund_amount"]
+            else "PENDING"
+        )
+    elif row["status"] == "REFUND_PENDING":
+        result.update(refund_status="PENDING", refund_amount=row["amount"])
+    return result
 
 
 async def submission_for_player(submission_id, player):
@@ -515,7 +586,7 @@ async def reconcile_submission(row):
         WHERE id=:id AND status='PENDING' AND expires_at<=:time""",
         {"id": row["id"], "time": game.now()},
     )
-    return public_submission(
+    return await public_submission(
         dict(
             await db.fetchone(
                 "SELECT * FROM satshole.submissions WHERE id=:id", {"id": row["id"]}

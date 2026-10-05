@@ -1,8 +1,8 @@
 {% extends "base.html" %}{% from "macros.jinja" import window_vars with context %}
-{% block scripts %}{{ window_vars(user) }}<script src="{{ static_url_for('satshole/static', path='js/admin.js') }}?v=4"></script>{% endblock %}
+{% block scripts %}{{ window_vars(user) }}<script src="{{ static_url_for('satshole/static', path='js/admin.js') }}?v=7"></script>{% endblock %}
 {% block page %}
 <div class="row q-col-gutter-lg"><div class="col-12 col-md-7"><q-card><q-card-section>
-<h5 class="q-my-sm">SatsHole · Game settings</h5><p>Configure the receiving wallet and official runs. Weekly leaderboards are available. Automatic prize payouts are the next development phase.</p>
+<h5 class="q-my-sm">SatsHole · Game settings</h5><p>Configure the receiving wallet and official runs. Weekly leaderboards are available. Review closed competitions and manage prize and refund payments below.</p>
 <q-select filled v-model="walletId" :options="g.user.walletOptions" emit-value map-options label="Game wallet" @update:model-value="load"></q-select>
 <p class="q-mt-sm">${ configured ? 'Saved game wallet' : 'Choose a wallet, then press Save settings to configure the game.' }</p>
 <p class="text-negative" v-if="error">${ error }</p>
@@ -11,11 +11,12 @@
 <q-input filled type="number" v-model.number="config.game_price" label="Game price (sats, next week)" min="1" max="100000"></q-input>
 <q-input filled type="number" v-model.number="config.free_runs" label="Introductory free runs per player" min="0" max="100"></q-input>
 <q-input filled type="number" v-model.number="config.duration" label="Run duration (seconds, next week)" min="10" max="300"></q-input>
+<q-select filled v-model="config.competitor_aggression" :options="aggressionOptions" emit-value map-options label="Competitor aggression (official: next week, practice: immediately)"></q-select><p class="text-caption">Higher levels improve opponent movement, growth, object search and reaction speed, as well as pursuit behavior. Balanced is the default.</p>
 <q-input filled type="number" v-model.number="config.ai_count" label="AI opponents" min="0" max="16"></q-input>
 <q-input filled type="number" v-model.number="config.death_penalty" label="Death score penalty (%)" min="0" max="100"></q-input>
 <q-input filled type="number" v-model.number="config.invoice_expiry" label="Invoice expiry (seconds)" min="60" max="3600"></q-input>
 <q-input filled type="number" v-model.number="config.ready_expiry" label="Available run expiry (seconds)" min="300" max="86400"></q-input>
-<h6 class="q-my-sm">Weekly competition</h6><q-toggle v-model="config.leaderboard_enabled" label="Accept paid leaderboard entries"></q-toggle>
+<q-toggle v-model="config.automatic_payouts" label="Automatically settle prizes and refunds after review delay"></q-toggle><q-input filled type="number" v-model.number="config.settlement_delay" label="Winner review delay (seconds, next week)" min="60" max="604800"></q-input><q-select filled v-model="config.undistributed_policy" :options="['carry', 'hold']" label="Missing-recipient shares (next week)"></q-select><p>Carry sends missing podium shares to the next open week. Hold keeps them as a liability for later operator resolution. Payment retries reuse the saved invoice.</p><h6 class="q-my-sm">Weekly competition</h6><q-toggle v-model="config.leaderboard_enabled" label="Accept paid leaderboard entries"></q-toggle>
 <q-toggle v-model="config.allow_free_entries" label="Allow free official runs onto paid leaderboard (next week)"></q-toggle>
 <q-input filled type="number" v-model.number="config.leaderboard_price" label="Entry price (sats, next week)" min="1"></q-input>
 <q-input filled type="number" v-model.number="config.prize_percentage" label="Prize contribution % (remainder is operator revenue, next week)" min="0" max="100"></q-input>
@@ -34,6 +35,49 @@
 <p>Leaderboard operator revenue: ${ metrics.leaderboard_operator_revenue || 0 } sats</p><p>Pending refund liabilities: ${ metrics.refund_liability || 0 } sats</p>
 <p>This is recorded revenue, not the wallet's spendable balance.</p>
 <div v-for="row in metrics.runs" :key="row.status + row.paid">${ row.status } · ${ row.paid ? 'paid' : 'free / unpaid' }: ${ row.total }</div>
+<q-btn color="negative" :disable="busy || !walletId" @click="requestAction('Emergency pause games, entries and automatic payments', 'emergency-pause')">Emergency pause</q-btn>
+<div v-if="metrics.current_week"><h6>Current week</h6><p>${ metrics.current_week.games_played } games played · ${ metrics.current_week.paid_games } paid · ${ metrics.current_week.free_games } free · ${ metrics.current_week.unique_players } players</p><p>${ metrics.current_week.verified_runs } verified · ${ metrics.current_week.failed_verifications } rejected · average score ${ Number(metrics.current_week.average_score).toFixed(0) } · highest ${ metrics.current_week.highest_score }</p><p>${ metrics.current_week.paid_receipts } entry receipts · ${ metrics.current_week.unique_entrants } ranked players · ${ metrics.current_week.prize_liability } sats prize liability</p></div>
+<p v-if="metrics.outgoing">Outgoing payments: ${ metrics.outgoing.pending } pending · ${ metrics.outgoing.completed } completed · ${ metrics.outgoing.retry_needed } need retry · ${ metrics.outgoing.held } held</p>
+<h6>Settlement review</h6>
+<div v-for="week in operations.competitions" :key="week.id" class="q-mb-md">
+<p>Week ending ${ new Date(week.ends_at * 1000).toLocaleString() } · ${ week.status }</p>
+<template v-if="week.status === 'CLOSED' || week.status === 'PAYING'">
+<q-btn outline :disable="busy" @click="requestAction('Freeze winners and prize allocations', 'competitions/' + week.id + '/prepare')">Freeze prize plan</q-btn>
+<q-btn color="primary" :disable="busy" @click="requestAction('Send prize payments', 'competitions/' + week.id + '/settle')">Pay prizes</q-btn>
+</template></div>
+<div v-for="payment in operations.payments" :key="payment.id" class="q-mb-md">
+<p>${ payment.kind } · ${ payment.amount } sats · ${ payment.address } · ${ payment.status }</p>
+<p v-if="payment.error">${ payment.error }</p><p v-if="payment.held" class="text-warning">Payment held · sending paused</p>
+<q-btn v-if="payment.status !== 'PAID' && !payment.held" outline :disable="busy" @click="requestAction('Send or reconcile saved payment', 'payments/' + encodeURIComponent(payment.id) + '/retry')">Send / reconcile payment</q-btn>
+<template v-if="payment.status !== 'PAID'">
+<q-btn flat :disable="busy" @click="requestAction('Reconcile receipt without sending', 'payments/' + encodeURIComponent(payment.id) + '/reconcile')">Check receipt only</q-btn>
+<q-btn outline :disable="busy" @click="requestAction(payment.held ? 'Release payment hold' : 'Hold payment', 'payments/' + encodeURIComponent(payment.id) + '/hold', {held: !payment.held})">${ payment.held ? 'Release hold' : 'Hold' }</q-btn>
+<q-btn flat :disable="busy" @click="requestAction('Repair destination / replace a safely failed invoice', 'payments/' + encodeURIComponent(payment.id) + '/repair', {}, payment.address)">Repair destination</q-btn>
+</template></div>
 <q-btn flat @click="load" :disable="!walletId">Refresh metrics</q-btn>
 </q-card-section></q-card></div></div>
+<div class="q-mt-lg"><q-card><q-card-section>
+<h6 class="q-my-sm">Run and entry review</h6>
+<p>Review flags highlight replay inconsistencies and repeated rejection; they do not automatically block or disqualify anyone. Only server-verified scores rank. Disqualification changes eligibility, not receipt history. Refunds remove the full entry fee from its original allocations. Frozen competitions cannot be reallocated.</p>
+<q-select filled v-model="reviewCompetition" :options="[{label: 'All competitions', value: null}, ...operations.competitions.map(w => ({label: new Date(w.ends_at * 1000).toLocaleString() + ' · ' + w.status, value: w.id}))]" emit-value map-options label="Filter competition" @update:model-value="reviewPage = 0; loadReview()"></q-select>
+<div v-for="run in review.runs" :key="run.id" class="q-py-md" style="border-bottom: 1px solid #8884">
+<strong>${ run.display_name } · ${ run.authoritative_score == null ? 'No verified score' : run.authoritative_score + ' points' }</strong>
+<div class="q-gutter-sm"><q-badge v-for="flag in run.flags" :key="flag" color="warning" text-color="black">${ flag }</q-badge></div>
+<p>${ run.id } · ${ run.status } · ${ run.paid ? 'Paid' : 'Free / unpaid' } · ${ run.game_version }</p>
+<p v-if="run.submission_id">Entry ${ run.entry_status } · ${ run.disqualified ? 'Disqualified' : 'Eligible unless player is blocked' }</p>
+<p v-if="run.blocked" class="text-negative">Player blocked</p>
+<q-btn flat :disable="busy" @click="inspectRun(run.id)">Inspect run</q-btn>
+<q-btn flat :disable="busy" @click="replayRun(run.id)">Replay on server</q-btn>
+<q-btn flat :disable="busy" @click="downloadRun(run.id)">Download replay</q-btn>
+<q-btn outline :disable="busy" @click="requestAction(run.blocked ? 'Unblock player' : 'Block player (frozen awards remain unchanged)', 'review/players/' + run.player_id, {blocked: !run.blocked})">${ run.blocked ? 'Unblock player' : 'Block player' }</q-btn>
+<template v-if="run.entry_status === 'ENTRY_CREATED'">
+<q-btn outline :disable="busy" @click="requestAction(run.disqualified ? 'Restore entry' : 'Disqualify entry', 'review/entries/' + run.submission_id, {disqualified: !run.disqualified, refund: false})">${ run.disqualified ? 'Restore entry' : 'Disqualify entry' }</q-btn>
+<q-btn flat :disable="busy" @click="requestAction('Disqualify entry and record a full refund liability', 'review/entries/' + run.submission_id, {disqualified: true, refund: true})">Disqualify and refund</q-btn>
+</template></div>
+<q-btn flat :disable="reviewPage === 0 || busy" @click="changeReviewPage(-1)">Previous</q-btn><span>Page ${ reviewPage + 1 }</span><q-btn flat :disable="review.runs.length < 50 || busy" @click="changeReviewPage(1)">Next</q-btn>
+<h6>Operator audit</h6><p>Requested payment actions are logged here. Confirmed outgoing receipts record their outcomes.</p>
+<div v-for="event in review.audit" :key="event.id" class="q-mb-md"><strong>${ event.kind }</strong> · ${ new Date(event.created_at * 1000).toLocaleString() }<p>${ event.reason } · ${ event.applied ? 'Applied / request recorded' : 'Recovery pending' }</p><q-btn flat @click="inspectAudit(event.id)">Inspect audit record</q-btn></div>
+</q-card-section></q-card></div>
+<q-dialog v-model="actionOpen" persistent><q-card style="width: 560px; max-width: 95vw"><q-card-section><h6 class="q-my-sm">${ action && action.title }</h6><p v-if="action && action.repair">Repair stays held. Pending or uncertain sends cannot be replaced. A previously attempted invoice must be expired, with failure confirmed by LNbits and the funding source. Verify the recipient owns the new address before submitting.</p><q-input v-if="action && action.repair" filled v-model="actionAddress" label="Verified recipient Lightning Address"></q-input><q-input filled v-model="actionReason" type="textarea" maxlength="500" label="Reason (saved to operator audit)"></q-input><p class="text-negative" v-if="actionError">${ actionError }</p></q-card-section><q-card-actions align="right"><q-btn flat :disable="busy" @click="actionOpen = false">Cancel</q-btn><q-btn color="primary" :loading="busy" @click="performAction">${ action && action.title === 'Send prize payments' ? 'Send payments' : 'Apply action' }</q-btn></q-card-actions></q-card></q-dialog>
+<q-dialog v-model="inspectionOpen"><q-card style="width: 800px; max-width: 95vw"><q-card-section><h6>Recorded details</h6><pre style="white-space: pre-wrap; overflow-wrap: anywhere">${ JSON.stringify(inspection, null, 2) }</pre></q-card-section><q-card-actions align="right"><q-btn flat v-close-popup>Close</q-btn></q-card-actions></q-card></q-dialog>
 {% endblock %}

@@ -3,6 +3,8 @@
 import json
 import time
 from collections import deque
+from typing import Literal
+from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -10,9 +12,16 @@ from lnbits.core.crud import get_wallet
 from lnbits.core.models import WalletTypeInfo
 from lnbits.decorators import require_admin_key
 from lnbits.settings import settings
-from pydantic import BaseModel, Field, StrictInt, ValidationError, root_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    StrictInt,
+    ValidationError,
+    root_validator,
+    validator,
+)
 
-from . import competitions
+from . import competitions, moderation, settlement
 from . import game_service as service
 from .crud import db
 
@@ -45,9 +54,13 @@ class GameSettings(StrictModel):
     free_runs: int = Field(default=3, ge=0, le=100)
     duration: int = Field(default=120, ge=10, le=300)
     ai_count: int = Field(default=8, ge=0, le=16)
+    competitor_aggression: int = Field(default=5, ge=1, le=10)
     death_penalty: int = Field(default=20, ge=0, le=100)
     invoice_expiry: int = Field(default=600, ge=60, le=3600)
     ready_expiry: int = Field(default=3600, ge=300, le=86400)
+    undistributed_policy: Literal["carry", "hold"] = "carry"
+    automatic_payouts: bool = False
+    settlement_delay: int = Field(default=3600, ge=60, le=604800)
     leaderboard_enabled: bool = False
     leaderboard_price: int = Field(default=250, ge=1, le=1000000)
     prize_percentage: int = Field(default=80, ge=0, le=100)
@@ -79,6 +92,35 @@ class GameSettings(StrictModel):
 
 class EntryRequest(StrictModel):
     run_id: str = Field(min_length=1, max_length=50)
+    lightning_address: str = Field(min_length=3, max_length=320)
+
+
+class OperatorAction(StrictModel):
+    request_id: UUID
+    reason: str = Field(min_length=3, max_length=500)
+
+    @validator("reason")
+    def meaningful_reason(cls, value):
+        value = value.strip()
+        if len(value) < 3:
+            raise ValueError("Enter a reason for this operator action.")
+        return value
+
+
+class PlayerReview(OperatorAction):
+    blocked: bool
+
+
+class EntryReview(OperatorAction):
+    disqualified: bool
+    refund: bool = False
+
+
+class PaymentHold(OperatorAction):
+    held: bool
+
+
+class PaymentRepair(OperatorAction):
     lightning_address: str = Field(min_length=3, max_length=320)
 
 
@@ -158,6 +200,7 @@ async def session_data(p):
         "player": {"id": p["id"], "display_name": p["display_name"]},
         "free_remaining": max(0, config["free_runs"] - p["free_used"]),
         "config": config,
+        "practice_config": {"competitor_aggression": live["competitor_aggression"]},
         "runs": available,
     }
 
@@ -297,10 +340,44 @@ async def metrics(wallet=Depends(operator)):
     )
     revenue = await db.fetchone("""SELECT COALESCE(SUM(amount),0) AS amount FROM
         satshole.financial_events WHERE kind='game_revenue'""")
+    current = await competitions.current_competition()
+    week_metrics = None
+    if current:
+        summary = await db.fetchone(
+            """SELECT COUNT(*) AS runs_created, COALESCE(SUM(CASE WHEN
+started_at IS NOT NULL THEN 1 ELSE 0 END),0) AS games_played,
+COALESCE(SUM(CASE WHEN started_at IS NOT NULL AND paid=1 THEN 1
+ELSE 0 END),0) AS paid_games, COALESCE(SUM(CASE WHEN started_at
+IS NOT NULL AND paid=0 THEN 1 ELSE 0 END),0) AS free_games,
+COUNT(DISTINCT CASE WHEN started_at IS NOT NULL THEN player_id
+ELSE NULL END) AS unique_players, COALESCE(SUM(CASE WHEN
+status='VERIFIED' THEN 1 ELSE 0 END),0) AS verified_runs,
+COALESCE(SUM(CASE WHEN status='INVALID' THEN 1 ELSE 0 END),0) AS
+failed_verifications, COALESCE(AVG(CASE WHEN status='VERIFIED'
+THEN authoritative_score ELSE NULL END),0) AS average_score,
+COALESCE(MAX(CASE WHEN status='VERIFIED' THEN authoritative_score
+ELSE NULL END),0) AS highest_score FROM satshole.runs WHERE
+competition_id=:id""",
+            {"id": current["id"]},
+        )
+        week_metrics = {
+            "competition_id": current["id"],
+            **dict(summary),
+            **await competitions.totals(current["id"]),
+            "unique_entrants": len(await competitions.ranking(current["id"])),
+        }
+    payment_counts = await db.fetchone("""SELECT
+        COALESCE(SUM(CASE WHEN status!='PAID' THEN 1 ELSE 0 END),0) AS pending,
+        COALESCE(SUM(CASE WHEN status='PAID' THEN 1 ELSE 0 END),0) AS completed,
+        COALESCE(SUM(CASE WHEN status='RETRY' THEN 1 ELSE 0 END),0) AS retry_needed,
+        COALESCE(SUM(CASE WHEN held=1 AND status!='PAID' THEN 1 ELSE 0 END),0) AS held
+        FROM satshole.outgoing""")
     accounting = await competitions.totals()
     current_wallet = await get_wallet(wallet.wallet.id)
     wallet_balance = current_wallet.balance_msat // 1000 if current_wallet else 0
     return {
+        "current_week": week_metrics,
+        "outgoing": dict(payment_counts),
         "runs": [dict(r) for r in runs],
         "game_revenue": revenue["amount"],
         "prize_liability": accounting["prize_liability"],
@@ -314,3 +391,165 @@ async def metrics(wallet=Depends(operator)):
         "leaderboard_operator_revenue": accounting["operator_revenue"],
         "refund_liability": accounting["refund_liability"],
     }
+
+
+@router.get("/operations")
+async def settlement_operations(wallet=Depends(operator)):
+    return await settlement.operations()
+
+
+@router.post("/competitions/{competition_id}/prepare")
+async def prepare_settlement(
+    competition_id: str, data: OperatorAction, wallet=Depends(operator)
+):
+    await moderation.record_operation(
+        "prepare:" + competition_id,
+        wallet.wallet.user,
+        data.reason,
+        str(data.request_id),
+    )
+    return await settlement.settle(competition_id)
+
+
+@router.post("/competitions/{competition_id}/settle")
+async def pay_settlement(
+    competition_id: str, data: OperatorAction, wallet=Depends(operator)
+):
+    await moderation.record_operation(
+        "settle:" + competition_id,
+        wallet.wallet.user,
+        data.reason,
+        str(data.request_id),
+    )
+    await settlement.settle(competition_id, send=True)
+    return await settlement.operations()
+
+
+@router.post("/payments/{payment_id}/retry")
+async def retry_outgoing(
+    payment_id: str, data: OperatorAction, wallet=Depends(operator)
+):
+    row = await db.fetchone(
+        "SELECT wallet_id FROM satshole.outgoing WHERE id=:id", {"id": payment_id}
+    )
+    if not row or row["wallet_id"] != wallet.wallet.id:
+        raise HTTPException(404, "Payment not found.")
+    await moderation.record_operation(
+        "retry:" + payment_id, wallet.wallet.user, data.reason, str(data.request_id)
+    )
+    await settlement.transfer(payment_id)
+    return await settlement.operations()
+
+
+@router.get("/review")
+async def review_runs(
+    competition_id: str | None = None, page: int = 0, wallet=Depends(operator)
+):
+    if page < 0 or page > 10000:
+        raise HTTPException(422, "Invalid review page.")
+    return await moderation.inspect(competition_id, page)
+
+
+@router.get("/review/runs/{run_id}")
+async def inspect_run(run_id: str, wallet=Depends(operator)):
+    return await moderation.inspect_run(run_id)
+
+
+@router.get("/review/runs/{run_id}/replay")
+async def download_run_replay(run_id: str, wallet=Depends(operator)):
+    return await moderation.replay_payload(run_id)
+
+
+@router.post("/review/runs/{run_id}/replay")
+async def replay_run(run_id: str, wallet=Depends(operator)):
+    from .replay import verify
+
+    payload = await moderation.replay_payload(run_id)
+    row = await db.fetchone("SELECT * FROM satshole.runs WHERE id=:id", {"id": run_id})
+    try:
+        result = await verify(
+            {**dict(row), "config": payload["config"]}, payload["inputs"]
+        )
+    except ValueError:
+        raise HTTPException(422, "Stored replay was rejected.") from None
+    except Exception:
+        raise HTTPException(503, "Replay worker unavailable. Retry shortly.") from None
+    return {
+        "result": result,
+        "recorded_score": row["authoritative_score"],
+        "matches": result["score"] == row["authoritative_score"],
+    }
+
+
+@router.post("/review/players/{player_id}")
+async def review_player(player_id: str, data: PlayerReview, wallet=Depends(operator)):
+    return await moderation.block_player(
+        player_id, data.blocked, wallet.wallet.user, data.reason, str(data.request_id)
+    )
+
+
+@router.post("/review/entries/{submission_id}")
+async def review_entry(submission_id: str, data: EntryReview, wallet=Depends(operator)):
+    return await moderation.review_entry(
+        submission_id,
+        data.disqualified,
+        data.refund,
+        wallet.wallet.user,
+        data.reason,
+        str(data.request_id),
+    )
+
+
+@router.post("/payments/{payment_id}/hold")
+async def hold_payment(payment_id: str, data: PaymentHold, wallet=Depends(operator)):
+    return await moderation.hold_payment(
+        payment_id, data.held, wallet.wallet.user, data.reason, str(data.request_id)
+    )
+
+
+@router.post("/payments/{payment_id}/repair")
+async def repair_payment(
+    payment_id: str, data: PaymentRepair, wallet=Depends(operator)
+):
+    return await moderation.repair_payment(
+        payment_id,
+        data.lightning_address,
+        wallet.wallet.user,
+        data.reason,
+        str(data.request_id),
+    )
+
+
+@router.post("/emergency-pause")
+async def emergency_pause(data: OperatorAction, wallet=Depends(operator)):
+    return await moderation.emergency_pause(
+        wallet.wallet.user, data.reason, str(data.request_id)
+    )
+
+
+@router.get("/review/audit/{event_id}")
+async def inspect_audit(event_id: str, wallet=Depends(operator)):
+    row = await db.fetchone(
+        "SELECT * FROM satshole.operator_events WHERE id=:id", {"id": event_id}
+    )
+    if not row:
+        raise HTTPException(404, "Audit record not found.")
+    result = dict(row)
+    result["payload"] = json.loads(result["payload"])
+    return result
+
+
+@router.post("/payments/{payment_id}/reconcile")
+async def reconcile_outgoing(
+    payment_id: str, data: OperatorAction, wallet=Depends(operator)
+):
+    row = await db.fetchone(
+        "SELECT wallet_id FROM satshole.outgoing WHERE id=:id", {"id": payment_id}
+    )
+    if not row or row["wallet_id"] != wallet.wallet.id:
+        raise HTTPException(404, "Payment not found.")
+    await moderation.record_operation(
+        "reconcile:" + payment_id, wallet.wallet.user, data.reason, str(data.request_id)
+    )
+    await settlement.transfer(payment_id, send=False)
+    return await settlement.operations()

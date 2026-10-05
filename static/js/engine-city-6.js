@@ -2,7 +2,7 @@
  * The exact same file is loaded in browsers and the server verifier. */
 ;(function (root) {
   'use strict'
-  const VERSION = 'city-7', MAP = 'bitcoin-borough-7', TPS = 20
+  const VERSION = 'city-6', MAP = 'bitcoin-borough-6', TPS = 20
   const C = {world: 4800, startRadius: 22, speed: 12, growth: 5,
     eatRatio: 140, respawnTicks: 60, huntScore: 30, huntMass: 30}
   const TYPES = [
@@ -131,29 +131,23 @@
   function nearby(cells,h,range) {
     const out=[];for(let x=Math.floor((h.x-range)/200);x<=Math.floor((h.x+range)/200);x++)for(let y=Math.floor((h.y-range)/200);y<=Math.floor((h.y+range)/200);y++)out.push(...(cells.get(x+","+y)||[])); return out.sort((a,b)=>a.id-b.id)
   }
-  function opponentAbility(level){return {speed:8+Math.floor((level-1)*11/9),growthPercent:55+(level-1)*15,searchRadius:500+level*130,reactionTicks:Math.max(1,11-level)}}
+  function opponentAbility(level){return {speed:7+Math.floor((level+1)/2),growthPercent:50+level*5,searchRadius:450+level*90,reactionTicks:Math.max(2,11-level)}}
   function ai(s,h,cells) {
     const aggression=s.config.competitor_aggression
     const threats=s.holes.filter(o=>o.id!==h.id&&!o.deadUntil&&o.radius*100>=h.radius*C.eatRatio&&dist(o,h)<(o.radius+180+aggression*35)**2)
     if(threats.length) { const t=threats.sort((a,b)=>dist(a,h)-dist(b,h)||a.id-b.id)[0]; return direction(h.x-t.x,h.y-t.y) }
-    const ability=opponentAbility(aggression)
-    let best=null,value=-1,leadX=0,leadY=0
-    if(aggression>1)for(const o of s.holes){
-      if(o.id===h.id||o.deadUntil||(o.protectedUntil||0)>s.tick||h.radius*100<o.radius*C.eatRatio)continue
-      const distance=isqrt(dist(h,o)),gap=Math.max(0,distance-h.radius+o.radius/2)
-      const reward=(C.huntScore+o.mass/8)+(C.huntMass+o.mass/6)*.9
-      const v=reward*(.5+aggression*.2)*(h.personality===1?1.4:1)/(15+gap/ability.speed)
-      if(distance<ability.searchRadius&&v>value){value=v;best=o;const lead=Math.min(18,Math.floor(gap/ability.speed));leadX=Math.trunc((o.mx||0)*C.speed*lead/100);leadY=Math.trunc((o.my||0)*C.speed*lead/100)}
+    let best=null, value=-1
+    if(aggression>1) for(const o of s.holes) {
+      if(o.id===h.id||o.deadUntil||h.radius*100<o.radius*C.eatRatio)continue
+      const d=dist(h,o), v=((aggression-1)*1700*(h.personality===1?1.5:h.personality===0?.65:1))/(1+Math.floor(d/1000))
+      if(d<(450+aggression*65)**2&&v>value) { value=v; best=o }
     }
-    for(const o of nearby(cells,h,ability.searchRadius)){
-      const type=TYPES[o.type];if(o.ready>s.tick||type.minRadius>h.radius)continue
-      const gap=Math.max(0,isqrt(dist(h,o))-h.radius+type.size/2)
-      // Value growth as well as score, and compare travel time to the collectible
-      // edge. Large holes sweep nearby objects instead of chasing their centers.
-      const v=(type.score+type.mass*(.6+aggression*.07))/(10+gap/ability.speed)
-      if(v>value){value=v;best=o;leadX=leadY=0}
+    for(const o of nearby(cells,h,opponentAbility(aggression).searchRadius)) {
+      if(o.ready>s.tick||TYPES[o.type].minRadius>h.radius)continue
+      const d=dist(h,o), v=TYPES[o.type].score*60/(1+Math.floor(d/200))
+      if(v>value) { value=v; best=o }
     }
-    if(best)return direction(best.x+leadX-h.x,best.y+leadY-h.y)
+    if(best) return direction(best.x-h.x,best.y-h.y)
     return direction(2400-h.x,2400-h.y)
   }
   function step(s, input=[0,0]) {
@@ -171,7 +165,7 @@
     for(const h of s.holes) {
       if(h.deadUntil) { if(s.tick<h.deadUntil)continue; h.deadUntil=0; h.protectedUntil=s.tick+60; h.mass=0; h.radius=C.startRadius; h.x=100+s.rng.int(4600); h.y=100+s.rng.int(4600) }
       if(h.id===0) { h.mx=input[0];h.my=input[1] }
-      else if((s.tick-1)%ability.reactionTicks===0) [h.mx,h.my]=ai(s,h,cells)
+      else if(s.tick%ability.reactionTicks===1) [h.mx,h.my]=ai(s,h,cells)
       const d=Math.max(100,isqrt(h.mx*h.mx+h.my*h.my))
       h.x=Math.max(h.radius,Math.min(C.world-h.radius,h.x+Math.trunc(h.mx*(h.id?ability.speed:C.speed)/d)))
       h.y=Math.max(h.radius,Math.min(C.world-h.radius,h.y+Math.trunc(h.my*(h.id?ability.speed:C.speed)/d)))
