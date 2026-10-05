@@ -1,7 +1,7 @@
 {
   "name": "SatsHole",
   "short_description": "A 3D city arcade game with Lightning play payments",
-  "tile": "/satshole/static/image/satshole-icon-v2.png",
+  "tile": "/satshole/static/image/satshole.png",
   "min_lnbits_version": "1.3.0",
   "contributors": [
     {
@@ -12,13 +12,13 @@
   ],
   "images": [
     {
-      "uri": "https://raw.githubusercontent.com/blackcoffeexbt/satsholeio/main/static/image/1.png"
+      "uri": "https://raw.githubusercontent.com/blackcoffeexbt/satsholeio/main/static/image/1.jpg"
     },
     {
-      "uri": "https://raw.githubusercontent.com/blackcoffeexbt/satsholeio/main/static/image/2.png"
+      "uri": "https://raw.githubusercontent.com/blackcoffeexbt/satsholeio/main/static/image/2.jpg"
     },
     {
-      "uri": "https://raw.githubusercontent.com/blackcoffeexbt/satsholeio/main/static/image/3.png"
+      "uri": "https://raw.githubusercontent.com/blackcoffeexbt/satsholeio/main/static/image/3.jpg"
     }
   ],
   "description_md": "https://raw.githubusercontent.com/blackcoffeexbt/satsholeio/main/description.md",
