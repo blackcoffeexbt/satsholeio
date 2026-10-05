@@ -1,243 +1,39 @@
-<!--/////////////////////////////////////////////////-->
-<!--//PAGE FOR THE EXTENSIONS BACKEND IN LNBITS//////-->
-<!--/////////////////////////////////////////////////-->
-
-{% extends "base.html" %} {% from "macros.jinja" import window_vars with context
-%} {% block scripts %} {{ window_vars(user) }}
-<script src="{{ static_url_for('satshole/static', path='js/index.js') }}"></script>
-{% endblock %} {% block page %}
-<div class="row q-col-gutter-md" id="makeItRain">
-  <div class="col-12 col-md-8 col-lg-7 q-gutter-y-md">
-    <q-card>
-      <q-card-section>
-        <q-btn unelevated color="primary" @click="formDialog.show = true"
-          >New SatsHole</q-btn
-        >
-      </q-card-section>
-    </q-card>
-
-    <q-card>
-      <q-card-section>
-        <div class="row items-center no-wrap q-mb-md">
-          <div class="col">
-            <h5 class="text-subtitle1 q-my-none">SatsHole</h5>
-          </div>
-          <div class="col-auto">
-            <q-btn flat color="grey" @click="exportCSV">Export to CSV</q-btn>
-          </div>
-        </div>
-        <q-table
-          dense
-          flat
-          :rows="myex"
-          row-key="id"
-          :columns="myexTable.columns"
-          v-model:pagination="myexTable.pagination"
-        >
-          <satshole v-slot:header="props">
-            <q-tr :props="props">
-              <q-th v-for="col in props.cols" :key="col.name" :props="props">
-                ${ col.label }
-              </q-th>
-            </q-tr>
-          </satshole>
-
-          <template v-slot:body="props">
-            <q-tr :props="props">
-              <q-td v-for="col in props.cols" :key="col.name" :props="props">
-                <div v-if="col.field == 'total'">${ col.value / 1000} sats</div>
-                <div v-else>${ col.value }</div>
-              </q-td>
-              <q-td auto-width>
-                <q-btn
-                  unelevated
-                  dense
-                  size="sm"
-                  icon="qr_code"
-                  :color="($q.dark.isActive) ? 'grey-7' : 'grey-5'"
-                  class="q-mr-sm"
-                  @click="openUrlDialog(props.row.id)"
-                ></q-btn
-              ></q-td>
-              <q-td auto-width>
-                <q-btn
-                  unelevated
-                  dense
-                  size="sm"
-                  icon="launch"
-                  :color="($q.dark.isActive) ? 'grey-7' : 'grey-5'"
-                  type="a"
-                  :href="props.row.id"
-                  target="_blank"
-                  ><q-tooltip>Open public page</q-tooltip></q-btn
-                ></q-td
-              >
-
-              <q-td>
-                <q-btn
-                  flat
-                  dense
-                  size="xs"
-                  @click="updateSatsHoleForm(props.row.id)"
-                  icon="edit"
-                  color="light-blue"
-                >
-                  <q-tooltip> Edit copilot </q-tooltip>
-                </q-btn>
-              </q-td>
-
-              <q-td>
-                <q-btn
-                  flat
-                  dense
-                  size="xs"
-                  @click="deleteSatsHole(props.row.id)"
-                  icon="cancel"
-                  color="pink"
-                >
-                  <q-tooltip> Delete copilot </q-tooltip>
-                </q-btn>
-              </q-td>
-            </q-tr>
-          </template>
-        </q-table>
-      </q-card-section>
-    </q-card>
-  </div>
-
-  <div class="col-12 col-md-4 col-lg-5 q-gutter-y-md">
-    <q-card>
-      <q-card-section>
-        <h6 class="text-subtitle1 q-my-none">
-          {{SITE_TITLE}} SatsHole extension
-        </h6>
-        <p>
-          Simple extension you can use as a base for your own extension. <br />
-          Includes very simple LNURL-pay and LNURL-withdraw example.
-        </p>
-      </q-card-section>
-      <q-card-section class="q-pa-none">
-        <q-separator></q-separator>
-        <q-list>
-          {% include "satshole/_api_docs.html" %}
-          <q-separator></q-separator>
-          {% include "satshole/_satshole.html" %}
-        </q-list>
-      </q-card-section>
-    </q-card>
-  </div>
-
-  <!--/////////////////////////////////////////////////-->
-  <!--//////////////FORM DIALOG////////////////////////-->
-  <!--/////////////////////////////////////////////////-->
-
-  <q-dialog v-model="formDialog.show" position="top" @hide="closeFormDialog">
-    <q-card class="q-pa-lg q-pt-xl" style="width: 500px">
-      <q-form @submit="sendSatsHoleData" class="q-gutter-md">
-        <q-input
-          filled
-          dense
-          v-model.trim="formDialog.data.name"
-          label="Name"
-          placeholder="Name for your record"
-        ></q-input>
-        <q-select
-          filled
-          dense
-          emit-value
-          v-model="formDialog.data.wallet"
-          :options="g.user.walletOptions"
-          label="Wallet *"
-        ></q-select>
-        <q-input
-          filled
-          dense
-          type="number"
-          v-model.trim="formDialog.data.lnurlwithdrawamount"
-          label="LNURL-withdraw amount"
-        ></q-input>
-        <q-input
-          filled
-          dense
-          type="number"
-          v-model.trim="formDialog.data.lnurlpayamount"
-          label="LNURL-pay amount"
-        ></q-input>
-        <div class="row q-mt-lg">
-          <q-btn
-            v-if="formDialog.data.id"
-            unelevated
-            color="primary"
-            type="submit"
-            >Update SatsHole</q-btn
-          >
-          <q-btn
-            v-else
-            unelevated
-            color="primary"
-            :disable="formDialog.data.name == null || formDialog.data.wallet == null || formDialog.data.lnurlwithdrawamount == null || formDialog.data.lnurlpayamount == null"
-            type="submit"
-            >Create SatsHole</q-btn
-          >
-          <q-btn v-close-popup flat color="grey" class="q-ml-auto"
-            >Cancel</q-btn
-          >
-        </div>
-      </q-form>
-    </q-card>
-  </q-dialog>
-
-  <!--/////////////////////////////////////////////////-->
-  <!--//////////////QR Code DIALOG/////////////////////-->
-  <!--/////////////////////////////////////////////////-->
-
-  <q-dialog v-model="urlDialog.show" position="top">
-    <q-card class="q-pa-lg q-pt-xl lnbits__dialog-card">
-
-        <lnbits-qrcode
-          v-if="qrValue && qrValue.startsWith('lnbc')"
-          :value="qrValue"
-        ></lnbits-qrcode>
-        <lnbits-qrcode-lnurl v-else :url="qrValue"></lnbits-qrcode-lnurl>
-
-      <q-separator></q-separator>
-
-      <div class="row justify-start q-mt-lg">
-        <div class="col col-md-auto">
-          <q-btn
-            outline
-            style="color: primmary"
-            @click="qrValue = urlDialog.data.lnurlpay"
-            >lnurlpay</q-btn
-          >
-        </div>
-        <div class="col col-md-auto">
-          <q-btn
-            outline
-            style="color: primmary"
-            @click="qrValue = urlDialog.data.lnurlwithdraw"
-            >lnurlwithdraw</q-btn
-          >
-        </div>
-        <div class="col q-pl-md">
-          <q-input filled bottom-slots dense v-model="invoiceAmount">
-            <template v-slot:append>
-              <q-btn
-                round
-                @click="createInvoice(urlDialog.data.id)"
-                color="primary"
-                flat
-                icon="add_circle"
-              />
-            </template>
-            <template v-slot:hint> Create an invoice </template>
-          </q-input>
-        </div>
-      </div>
-      <div class="row q-mt-lg">
-        <q-btn v-close-popup flat color="grey" class="q-ml-auto">Close</q-btn>
-      </div>
-    </q-card>
-  </q-dialog>
-</div>
+{% extends "base.html" %}{% from "macros.jinja" import window_vars with context %}
+{% block scripts %}{{ window_vars(user) }}<script src="{{ static_url_for('satshole/static', path='js/admin.js') }}?v=4"></script>{% endblock %}
+{% block page %}
+<div class="row q-col-gutter-lg"><div class="col-12 col-md-7"><q-card><q-card-section>
+<h5 class="q-my-sm">SatsHole · Game settings</h5><p>Configure the receiving wallet and official runs. Weekly leaderboards are available. Automatic prize payouts are the next development phase.</p>
+<q-select filled v-model="walletId" :options="g.user.walletOptions" emit-value map-options label="Game wallet" @update:model-value="load"></q-select>
+<p class="q-mt-sm">${ configured ? 'Saved game wallet' : 'Choose a wallet, then press Save settings to configure the game.' }</p>
+<p class="text-negative" v-if="error">${ error }</p>
+<q-form @submit="save" class="q-gutter-md q-mt-md">
+<q-toggle v-model="config.enabled" label="Accept new official games"></q-toggle>
+<q-input filled type="number" v-model.number="config.game_price" label="Game price (sats, next week)" min="1" max="100000"></q-input>
+<q-input filled type="number" v-model.number="config.free_runs" label="Introductory free runs per player" min="0" max="100"></q-input>
+<q-input filled type="number" v-model.number="config.duration" label="Run duration (seconds, next week)" min="10" max="300"></q-input>
+<q-input filled type="number" v-model.number="config.ai_count" label="AI opponents" min="0" max="16"></q-input>
+<q-input filled type="number" v-model.number="config.death_penalty" label="Death score penalty (%)" min="0" max="100"></q-input>
+<q-input filled type="number" v-model.number="config.invoice_expiry" label="Invoice expiry (seconds)" min="60" max="3600"></q-input>
+<q-input filled type="number" v-model.number="config.ready_expiry" label="Available run expiry (seconds)" min="300" max="86400"></q-input>
+<h6 class="q-my-sm">Weekly competition</h6><q-toggle v-model="config.leaderboard_enabled" label="Accept paid leaderboard entries"></q-toggle>
+<q-toggle v-model="config.allow_free_entries" label="Allow free official runs onto paid leaderboard (next week)"></q-toggle>
+<q-input filled type="number" v-model.number="config.leaderboard_price" label="Entry price (sats, next week)" min="1"></q-input>
+<q-input filled type="number" v-model.number="config.prize_percentage" label="Prize contribution % (remainder is operator revenue, next week)" min="0" max="100"></q-input>
+<q-input filled type="number" v-model.number="config.first_percentage" label="First prize %" min="0" max="100"></q-input><q-input filled type="number" v-model.number="config.second_percentage" label="Second prize %" min="0" max="100"></q-input><q-input filled type="number" v-model.number="config.third_percentage" label="Third prize %" min="0" max="100"></q-input>
+<q-input filled v-model="config.timezone" label="Competition timezone (IANA name, next week)"></q-input>
+<q-input filled type="number" v-model.number="config.close_weekday" label="Closing weekday (0 Monday – 6 Sunday)" min="0" max="6"></q-input><q-input filled type="number" v-model.number="config.close_hour" label="Closing hour" min="0" max="23"></q-input><q-input filled type="number" v-model.number="config.close_minute" label="Closing minute" min="0" max="59"></q-input>
+<p>Entry confirmation must reach this extension strictly before the cutoff. Late payments become refundable liabilities. Prices and prize shares are fixed for an existing week. Pause switches apply immediately.</p>
+<q-btn color="primary" type="submit" :loading="busy" :disable="!walletId">Save settings</q-btn>
+<q-btn color="negative" @click="pause" :disable="!walletId">Pause new games</q-btn>
+</q-form><p class="q-mt-md">Settings are snapshotted for each run. Existing paid attempts keep their purchased rules. First setup requires an LNbits administrator; subsequent changes require this wallet's admin key.</p>
+</q-card-section></q-card></div><div class="col-12 col-md-5"><q-card><q-card-section>
+<h6 class="q-my-sm">Operations</h6><q-btn outline href="/satshole/play" target="_blank">Open public game</q-btn>
+<p class="q-mt-md">Wallet balance: ${ metrics.wallet_balance || 0 } sats</p><p>Balance less recorded liabilities (before fees): ${ metrics.balance_less_liabilities || 0 } sats</p>
+<p class="q-mt-md">Recorded game revenue: <strong>${ metrics.game_revenue } sats</strong></p>
+<p>Prize liability: <strong>${ metrics.prize_liability } sats</strong></p>
+<p>Leaderboard operator revenue: ${ metrics.leaderboard_operator_revenue || 0 } sats</p><p>Pending refund liabilities: ${ metrics.refund_liability || 0 } sats</p>
+<p>This is recorded revenue, not the wallet's spendable balance.</p>
+<div v-for="row in metrics.runs" :key="row.status + row.paid">${ row.status } · ${ row.paid ? 'paid' : 'free / unpaid' }: ${ row.total }</div>
+<q-btn flat @click="load" :disable="!walletId">Refresh metrics</q-btn>
+</q-card-section></q-card></div></div>
 {% endblock %}

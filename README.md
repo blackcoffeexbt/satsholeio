@@ -1,44 +1,73 @@
-`The README.md typically serves as a guide for using the extension.`
+# SatsHole · Bitcoin Borough
 
-# SatsHole - An [LNbits](https://github.com/lnbits/lnbits) Extension
+An LNbits extension with an original 3D city-eating arcade game and deterministic
+server replay. Single player, eight client-side AI opponents by default.
 
-## A Starter Template for Your Own Extension
+## Local setup
 
-Ready to start hacking? Once you've forked this extension, you can incorporate functions from other extensions as needed.
+Enable the `satshole` extension in LNbits. Node.js 18+ must be available to the
+LNbits server process for replay verification. No new Python dependencies.
 
-### How to Use This Template
+Open the extension from your LNbits wallet to configure it. An LNbits administrator
+must perform initial setup. Select the receiving wallet and save settings. Future
+configuration requires that same wallet's admin key. Official games are paused
+until configuration exists.
 
-> [!IMPORTANT] the sequence of steps is very important so as not to run into issues!
+Public page: `/satshole/play` (no LNbits account needed).
 
-> [!NOTE] You may want to modify your models.py/migration.py before installing the extension on your lnbits server (between steps
+Defaults: 25 sats per paid attempt, three introductory free attempts, 120 seconds,
+eight AI opponents, 20% death score penalty. Unlimited practice is separate from
+introductory official runs and cannot qualify for the paid leaderboard by default.
 
-> This guide assumes you're using this extension as a base for a new one, and have installed LNbits using <https://github.com/lnbits/lnbits/blob/main/docs/guide/installation.md#option-1-recommended-poetry>.
+## Implemented
 
-1. Fork this extension to your Github repo with the name you want, e.g., `yourextensionname` -> <https://github.com/yourgithubusername/yourextensionname> (do not include hyphens as they can cause issues!)
+- 3D city, angled camera, keyboard/mouse/touch controls, arcade audio.
+- Fixed 20 Hz deterministic engine, spatial indexing, replay-compatible versioning.
+- Pavement-only people/furniture/trees, growth progress arc, interpolated rendering.
+- Seeded merged parks/ponds, terraced streets, varied towers and large landmarks.
+- Moving road traffic, parked cars, curb-aligned five-cone rows and rare 120-point bitcoins.
+- Opponents move at 83% player speed and receive 75% object growth mass.
+- Floating collection scores and directional support-loss/gravity fall animations.
+- HttpOnly player identity cookie, chosen display name, free-run quota.
+- Native LNbits invoices, QR/copy/wallet payment actions, receipt reconciliation.
+- Server-created seed revealed only after an atomic one-use START.
+- Snapshotted run rules, expiring invoices and available attempts.
+- Server replay produces the authoritative score; arbitrary client scores rejected.
+- Immutable final-input commitment, bounded replay workers, operational retry.
+- Append-only idempotent game revenue records and operator metrics.
+- Weekly competitions with frozen rules and a DST-aware Sunday 21:00 close.
+- Paid verified-score entries, one best score per player, and historical leaderboards.
+- Default 80/20 prize/operator allocation and estimated 70/20/10 podium prizes.
+- Separate invoice attempts, duplicate-payment refund liabilities and recovery.
 
-1. Clone the Repository to your local computer. `git clone git@github.com/yourgithubuersname/yourextensionname`
+Leaderboard entry defaults to disabled. The operator can configure it separately
+from paid play. Entry is accepted only when the extension first confirms payment
+before the weekly cutoff; an unpaid invoice does not reserve a place. Late receipts
+and additional payments for the same entry are recorded in full as refund liabilities.
+Tied scores use the first accepted entry. Financial and game rules are frozen for
+each week; pauses take effect immediately.
 
-1. `cd` into the folder `yourextensionname` and delete the `.git` folder with `rm -rf .git`
+Closing or refreshing after START forfeits the attempt. A paid READY attempt remains
+available until its configured expiry. Confirmed late invoice payments grant the
+purchased attempt. Clearing cookies creates a new pseudonymous identity; introductory
+free games are a browser allowance, not a proof of unique human identity.
 
-1. run `./updateExtensionName.sh satshole:<yourextensionname> satsHole:<yourExtensionName> SatsHole:<YourExtensionName>` (to replace all variations)
+## Still in development
 
-1. edit `./manifest.json` and replace the organization `lnbits` with `<yourgithubusernaame>`
+Automatic prize payouts, carry-forward, refund transfers and operator fraud tooling.
+The current ledger records liabilities but does not send these payments.
+Real invoice settlement must be tested against the operator's configured wallet.
 
-1. (Optional) Modify your models.py/migration.py file to create your own database tables, or just play with the already existing ones
+## Tests
 
-1. Re-initialize a git repo with `git init && git add . && git commit -m "initial commit"`
+`node --test tests/simulation.cjs`
 
-1. Push to your github repo
+Using the LNbits Python environment, `python tests/game_backend.py` and
+`python tests/competition_backend.py`. The 18 backend and 14 simulation tests
+cover replay, invoice recovery, duplicate receipts, weekly snapshots and DST. Integration
+checks use a temporary database and fake Lightning I/O; no real funds move.
 
-1. [!IMPORTANT] **you must create a release** _in your github repo_ in order for it to show up in your lnbits extensions!
+`node tests/fairness.cjs 1000` samples full-duration seeds with a simple baseline bot.
+`node verify.cjs < satshole-replay.json` verifies an exported practice replay.
 
-1. Start up your lnbits server and go to the Settings -> EXTENSIONS and add your manifest to the extension sources. It should be `https://raw.githubusercontent.com/<yourgithubusernaame>/<yourextensionname>/main/manifest.json` (going to this link should show your updated manifest) and **save**. ![Extension Sources](https://i.imgur.com/MUGwAU3.png)
-1. Great! Now if you go to the **Extensions** and go to the **ALL** tab, you should see your extension available for installing! (note that Github has an API rate limit, and you may want to include an API key generated from your github account in the `.env` file)
-
-1. Remove the installed extension from `lnbits/lnbits/extensions`.
-
-1. Create a symbolic link using `ln -s /home/ben/Projects/<name of your extension> /home/ben/Projects/lnbits/lnbits/extensions`.
-
-1. Restart your LNbits installation. You can now modify your extension and the changes will appear on your LNbits instance (stop & restart your lnbits for full initialization of all files if needed, e.g., for migration to take effect). You can also `git push` changes to your new repo and create a release _in your github repo_ if you want to install it from a fresh lnbits!
-
-1. IMPORTANT: If you want your extension to be added to the official LNbits manifest, please follow the guidelines here: <https://github.com/lnbits/lnbits-extensions#important>
+See `DEVELOPMENT.md` for implementation status and remaining milestones.

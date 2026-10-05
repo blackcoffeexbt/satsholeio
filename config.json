@@ -1,6 +1,6 @@
 {
   "name": "SatsHole",
-  "short_description": "Minimal extension to build on",
+  "short_description": "A 3D city arcade game with Lightning play payments",
   "tile": "/satshole/static/image/satshole.png",
   "min_lnbits_version": "1.3.0",
   "contributors": [
