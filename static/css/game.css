@@ -9,3 +9,14 @@ main,section{max-height:88vh;overflow:auto}#leaderboard-panel{left:50%;transform
 #map-scoreboard{position:fixed;top:90px;right:30px;width:230px;padding:14px 16px;border:1px solid #ffffff25;border-radius:18px;background:#10292edb;backdrop-filter:blur(8px);pointer-events:none;z-index:2}#map-scoreboard h2{margin:0 0 10px;font-size:10px;letter-spacing:2px;color:#bfd6d2}#map-scores{list-style:none;margin:0;padding:0;font-size:12px}#map-scores li{display:flex;align-items:center;gap:8px;padding:6px 0;border-top:1px solid #ffffff12}#map-scores .map-place{width:16px;color:var(--hole-color);font-weight:800;flex-shrink:0}#map-scores .map-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--hole-color)}#map-scores strong{font-variant-numeric:tabular-nums;font-size:13px}#map-scores .map-player{font-weight:800}#map-scores li:first-child strong{color:#ffc65a}@media(max-width:600px){#map-scoreboard{top:150px;right:12px;width:170px;padding:10px 12px;border-radius:12px}#map-scores{font-size:10px}#map-scores li{padding:4px 0;gap:5px}#map-scores strong{font-size:11px}#map-scoreboard h2{font-size:9px;margin-bottom:6px}}
 
 #invoice-qr canvas,#entry-qr canvas{display:block;max-width:100%;height:auto}
+
+.verification-spinner{height:88px;display:grid;place-items:center;perspective:500px;margin:12px auto}
+.verification-spinner[hidden]{display:none}
+.verification-coin{width:64px;height:64px;position:relative;transform-style:preserve-3d;animation:bitcoin-verify-spin 1.8s linear infinite}
+.coin-face,.coin-edge{position:absolute;inset:0;border-radius:50%;backface-visibility:hidden}
+.coin-face{display:grid;place-items:center;border:3px solid #ffe19a;background:radial-gradient(circle at 30% 25%,#ffdc75,#f7931a 65%,#c66a08);color:#fff2c6;font:bold 43px/1 Arial,sans-serif;text-shadow:1px 2px #a95507;box-shadow:inset 0 0 0 3px #da810f,inset 0 0 0 5px #ffd16a}
+.coin-front{transform:translateZ(5px)}
+.coin-back{transform:rotateY(180deg) translateZ(5px)}
+.coin-edge{background:#cb780c;border:2px dashed #ffcf67;transform:translateZ(var(--depth));backface-visibility:visible}
+@keyframes bitcoin-verify-spin{from{transform:rotateX(-15deg) rotateY(0deg)}to{transform:rotateX(-15deg) rotateY(360deg)}}
+@media(prefers-reduced-motion:reduce){.verification-coin{animation:none;transform:rotateX(-15deg) rotateY(25deg)}}

@@ -67,6 +67,39 @@ verification and resolution of retained unallocated prizes under the optional ho
 policy. Automatic transfers default to disabled.
 Real incoming and outgoing invoice settlement must be tested against the operator's configured wallet.
 
+## Troubleshooting
+
+### Official run shows `INVALID` after verification
+
+If an official game finishes but shows `INVALID` or “Replay could not verify this
+input log”, it cannot be submitted to the leaderboard. One possible cause is an
+outdated Node.js runtime used by the LNbits server. For example, older versions
+can fail with `Cannot find module 'node:fs'` before replay verification starts.
+
+**The LNbits server process must use Node.js 18 or later.** Node.js 24 LTS or a
+newer supported LTS release is recommended. Check the version and executable in
+the environment where LNbits actually runs:
+
+```sh
+node --version
+command -v node
+```
+
+A terminal can use a different Node installation from the LNbits service. For
+container deployments, check and update Node inside the container. Install a
+compatible version, configure the LNbits service to use its executable through
+its `PATH`, and restart LNbits. Updating the interactive shell alone may not fix
+server verification.
+
+Check the LNbits logs for `SatsHole verifier`. These entries show the executable,
+Node runtime version, verifier path, exit code and error output. After updating,
+play a new official run and confirm verification succeeds with `exit=0`.
+Previously `INVALID` runs are not reverified by the Retry verification button.
+
+`INVALID` can also indicate rejected replay inputs or a verification timeout. If
+LNbits already uses a compatible Node version, use the verifier logs to diagnose
+the failure rather than assuming every invalid run is a Node version issue.
+
 ## Tests
 
 `node --test tests/simulation.cjs`
